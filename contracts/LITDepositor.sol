@@ -4,13 +4,14 @@ pragma solidity 0.8.19;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 import "./cdxLIT.sol";
-import "./interfaces/IRewards.sol";
-import "./interfaces/IStaker.sol";
+import "./Interfaces.sol";
 
 /// @notice fork of CrvDepositor from convexfinance
 contract LITDepositor {
+    using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address;
 
@@ -30,7 +31,7 @@ contract LITDepositor {
     uint256 public incentiveWant = 0;
     uint256 public unlockTime;
 
-    constructor(address _staker, address _minter) public {
+    constructor(address _staker, address _minter) {
         staker = _staker;
         minter = _minter;
         feeManager = msg.sender;
@@ -86,7 +87,7 @@ contract LITDepositor {
         uint256 unlockInWeeks = (unlockAt / WEEK) * WEEK;
 
         // increase time too if over 2 week buffer
-        if (unlockInWeeks - unlockTime > 2) {
+        if (unlockInWeeks.sub(unlockTime) > 2) {
             IStaker(staker).increaseTime(unlockAt);
             unlockTime = unlockInWeeks;
         }
@@ -119,18 +120,20 @@ contract LITDepositor {
             _lockWant();
             if (incentiveWant > 0) {
                 // add the incentive tokens here so they can be staked together
-                _amount += incentiveWant;
+                _amount = _amount.add(incentiveWant);
                 incentiveWant = 0;
             }
         } else {
             // move tokens here
             IERC20(want).safeTransferFrom(msg.sender, address(this), _amount);
             // defer lock cost to another user
-            uint256 callIncentive = (_amount * lockIncentive) / FEE_DENOMINATOR;
-            _amount -= callIncentive;
+            uint256 callIncentive = _amount.mul(lockIncentive).div(
+                FEE_DENOMINATOR
+            );
+            _amount = _amount.sub(callIncentive);
 
             // add to a pool for lock caller
-            incentiveWant += callIncentive;
+            incentiveWant = incentiveWant.add(callIncentive);
         }
 
         bool depositOnly = _stakeAddress == address(0);

@@ -1,25 +1,30 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.6.12;
+pragma solidity 0.8.19;
 
-import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract CurveVoterProxy {
+import "./Interfaces.sol";
+
+/// @notice fork of CurveVoterProxy from convexfinance
+contract CodexVoterProxy {
+    using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address;
-    using SafeMath for uint256;
 
     address public constant mintr =
-        address(0xd061D61a4d941c39E5453435B6345Dc261C2fcE0);
-    address public constant crv =
-        address(0xD533a949740bb3306d119CC777fa900bA034cd52);
+        address(0xF087521Ffca0Fa8A43F5C445773aB37C5f574DA0); // oLIT minter
+    address public constant want =
+        address(0x9232a548DD9E81BaC65500b5e0d918F8Ba93675C); // Balancer 20WETH/80LIT
+    address public constant oLIT =
+        address(0x627fee87d0D9D2c55098A06ac805Db8F98B158Aa); // oLIT
 
     address public constant escrow =
-        address(0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2);
+        address(0xf17d23136B4FeAd139f54fB766c8795faae09660); // veLIT
     address public constant gaugeController =
-        address(0x2F50D538606Fa9EDD2B11E2446BEb18C9D5846bB);
+        address(0x901c8aA6A61f74aC95E7f397E22A0Ac7c1242218); // gauge controller
 
     address public owner;
     address public operator;
@@ -28,7 +33,7 @@ contract CurveVoterProxy {
     mapping(address => bool) private stashPool;
     mapping(address => bool) private protectedTokens;
 
-    constructor() public {
+    constructor() {
         owner = msg.sender;
     }
 
@@ -80,7 +85,7 @@ contract CurveVoterProxy {
         if (balance > 0) {
             IERC20(_token).safeApprove(_gauge, 0);
             IERC20(_token).safeApprove(_gauge, balance);
-            ICurveGauge(_gauge).deposit(balance);
+            IGauge(_gauge).deposit(balance);
         }
         return true;
     }
@@ -131,7 +136,7 @@ contract CurveVoterProxy {
         address _gauge,
         uint256 _amount
     ) internal returns (uint256) {
-        ICurveGauge(_gauge).withdraw(_amount);
+        IGauge(_gauge).withdraw(_amount);
         return _amount;
     }
 
@@ -140,29 +145,29 @@ contract CurveVoterProxy {
         uint256 _unlockTime
     ) external returns (bool) {
         require(msg.sender == depositor, "!auth");
-        IERC20(crv).safeApprove(escrow, 0);
-        IERC20(crv).safeApprove(escrow, _value);
-        ICurveVoteEscrow(escrow).create_lock(_value, _unlockTime);
+        IERC20(want).safeApprove(escrow, 0);
+        IERC20(want).safeApprove(escrow, _value);
+        IVoteEscrow(escrow).create_lock(_value, _unlockTime);
         return true;
     }
 
     function increaseAmount(uint256 _value) external returns (bool) {
         require(msg.sender == depositor, "!auth");
-        IERC20(crv).safeApprove(escrow, 0);
-        IERC20(crv).safeApprove(escrow, _value);
-        ICurveVoteEscrow(escrow).increase_amount(_value);
+        IERC20(want).safeApprove(escrow, 0);
+        IERC20(want).safeApprove(escrow, _value);
+        IVoteEscrow(escrow).increase_amount(_value);
         return true;
     }
 
     function increaseTime(uint256 _value) external returns (bool) {
         require(msg.sender == depositor, "!auth");
-        ICurveVoteEscrow(escrow).increase_unlock_time(_value);
+        IVoteEscrow(escrow).increase_unlock_time(_value);
         return true;
     }
 
     function release() external returns (bool) {
         require(msg.sender == depositor, "!auth");
-        ICurveVoteEscrow(escrow).withdraw();
+        IVoteEscrow(escrow).withdraw();
         return true;
     }
 
@@ -187,13 +192,13 @@ contract CurveVoterProxy {
         return true;
     }
 
-    function claimCrv(address _gauge) external returns (uint256) {
+    function claimOLIT(address _gauge) external returns (uint256) {
         require(msg.sender == operator, "!auth");
 
         uint256 _balance = 0;
         try IMinter(mintr).mint(_gauge) {
-            _balance = IERC20(crv).balanceOf(address(this));
-            IERC20(crv).safeTransfer(operator, _balance);
+            _balance = IERC20(oLIT).balanceOf(address(this));
+            IERC20(oLIT).safeTransfer(operator, _balance);
         } catch {}
 
         return _balance;
@@ -201,7 +206,7 @@ contract CurveVoterProxy {
 
     function claimRewards(address _gauge) external returns (bool) {
         require(msg.sender == operator, "!auth");
-        ICurveGauge(_gauge).claim_rewards();
+        IGauge(_gauge).claim_rewards();
         return true;
     }
 
@@ -217,7 +222,7 @@ contract CurveVoterProxy {
     }
 
     function balanceOfPool(address _gauge) public view returns (uint256) {
-        return ICurveGauge(_gauge).balanceOf(address(this));
+        return IGauge(_gauge).balanceOf(address(this));
     }
 
     function execute(
