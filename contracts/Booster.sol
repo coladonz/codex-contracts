@@ -13,12 +13,10 @@ contract Booster {
 
     address public constant oLIT =
         address(0x627fee87d0D9D2c55098A06ac805Db8F98B158Aa); // oLIT
-    address public constant voteOwnership =
-        address(0xE478de485ad2fe566d49342Cbd03E49ed7DB3356);
-    address public constant voteParameter =
-        address(0xBCfF8B0b9419b9A88c44546519b1e909cF330399);
 
-    uint256 public lockIncentive = 1000; //incentive to crv stakers
+    mapping(address => bool) public isVotingAddress;
+
+    uint256 public lockIncentive = 1000; //incentive to LIT stakers
     uint256 public stakerIncentive = 450; //incentive to native token stakers
     uint256 public earmarkIncentive = 50; //incentive to users who spend gas to make calls
     uint256 public platformFee = 0; //possible fee to build treasury
@@ -36,9 +34,9 @@ contract Booster {
     address public rewardArbitrator;
     address public voteDelegate;
     address public treasury;
-    address public stakerRewards; //cvx rewards
-    address public lockRewards; //cvxCrv rewards(crv)
-    address public lockFees; //cvxCrv vecrv fees
+    address public stakerRewards; //cdx rewards
+    address public lockRewards; //cdxLIT rewards(oLIT)
+    address public lockFees; //cdxLIT veLIT fees
     address public feeDistro;
     address public feeToken;
 
@@ -48,7 +46,7 @@ contract Booster {
         address lptoken;
         address token;
         address gauge;
-        address crvRewards;
+        address oLITRewards;
         address stash;
         bool shutdown;
     }
@@ -68,7 +66,7 @@ contract Booster {
         uint256 amount
     );
 
-    constructor(address _staker, address _minter) public {
+    constructor(address _staker, address _minter) {
         isShutdown = false;
         staker = _staker;
         owner = msg.sender;
@@ -123,6 +121,11 @@ contract Booster {
         rewardArbitrator = _arb;
     }
 
+    function setVotingAddress(address _votingAddress, bool _flag) external {
+        require(msg.sender == owner, "!auth");
+        isVotingAddress[_votingAddress] = _flag;
+    }
+
     function setVoteDelegate(address _voteDelegate) external {
         require(msg.sender == voteDelegate, "!auth");
         voteDelegate = _voteDelegate;
@@ -135,7 +138,7 @@ contract Booster {
         require(msg.sender == owner, "!auth");
 
         //reward contracts are immutable or else the owner
-        //has a means to redeploy and mint cvx via rewardClaimed()
+        //has a means to redeploy and mint cdx via rewardClaimed()
         if (lockRewards == address(0)) {
             lockRewards = _rewards;
             stakerRewards = _stakerRewards;
@@ -216,8 +219,8 @@ contract Booster {
         address token = ITokenFactory(tokenFactory).CreateDepositToken(
             _lptoken
         );
-        //create a reward contract for crv rewards
-        address newRewardPool = IRewardFactory(rewardFactory).CreateCrvRewards(
+        //create a reward contract for oLIT rewards
+        address newRewardPool = IRewardFactory(rewardFactory).CreateOLITRewards(
             pid,
             token
         );
@@ -235,7 +238,7 @@ contract Booster {
                 lptoken: _lptoken,
                 token: token,
                 gauge: _gauge,
-                crvRewards: newRewardPool,
+                oLITRewards: newRewardPool,
                 stash: stash,
                 shutdown: false
             })
@@ -315,7 +318,7 @@ contract Booster {
         if (_stake) {
             //mint here and send to rewards on user behalf
             ITokenMinter(token).mint(address(this), _amount);
-            address rewardContract = pool.crvRewards;
+            address rewardContract = pool.oLITRewards;
             IERC20(token).safeApprove(rewardContract, 0);
             IERC20(token).safeApprove(rewardContract, _amount);
             IRewards(rewardContract).stakeFor(msg.sender, _amount);
@@ -390,7 +393,7 @@ contract Booster {
         uint256 _amount,
         address _to
     ) external returns (bool) {
-        address rewardContract = poolInfo[_pid].crvRewards;
+        address rewardContract = poolInfo[_pid].oLITRewards;
         require(msg.sender == rewardContract, "!auth");
 
         _withdraw(_pid, _amount, msg.sender, _to);
@@ -404,10 +407,7 @@ contract Booster {
         bool _support
     ) external returns (bool) {
         require(msg.sender == voteDelegate, "!auth");
-        require(
-            _votingAddress == voteOwnership || _votingAddress == voteParameter,
-            "!voteAddr"
-        );
+        require(isVotingAddress[_votingAddress], "!voteAddr");
 
         IStaker(staker).vote(_voteId, _votingAddress, _support);
         return true;
@@ -448,15 +448,15 @@ contract Booster {
         return true;
     }
 
-    //claim crv and extra rewards and disperse to reward contracts
+    //claim oLIT and extra rewards and disperse to reward contracts
     function _earmarkRewards(uint256 _pid) internal {
         PoolInfo storage pool = poolInfo[_pid];
         require(pool.shutdown == false, "pool is closed");
 
         address gauge = pool.gauge;
 
-        //claim crv
-        IStaker(staker).claimCrv(gauge);
+        //claim oLIT
+        IStaker(staker).claimOLIT(gauge);
 
         //check if there are extra rewards
         address stash = pool.stash;
@@ -467,53 +467,53 @@ contract Booster {
             IStash(stash).processStash();
         }
 
-        //crv balance
-        uint256 crvBal = IERC20(crv).balanceOf(address(this));
+        // oLIT balance
+        uint256 oLITBal = IERC20(oLIT).balanceOf(address(this));
 
-        if (crvBal > 0) {
-            uint256 _lockIncentive = crvBal.mul(lockIncentive).div(
+        if (oLITBal > 0) {
+            uint256 _lockIncentive = oLITBal.mul(lockIncentive).div(
                 FEE_DENOMINATOR
             );
-            uint256 _stakerIncentive = crvBal.mul(stakerIncentive).div(
+            uint256 _stakerIncentive = oLITBal.mul(stakerIncentive).div(
                 FEE_DENOMINATOR
             );
-            uint256 _callIncentive = crvBal.mul(earmarkIncentive).div(
+            uint256 _callIncentive = oLITBal.mul(earmarkIncentive).div(
                 FEE_DENOMINATOR
             );
 
-            //send treasury
+            // send treasury
             if (
                 treasury != address(0) &&
                 treasury != address(this) &&
                 platformFee > 0
             ) {
-                //only subtract after address condition check
-                uint256 _platform = crvBal.mul(platformFee).div(
+                // only subtract after address condition check
+                uint256 _platform = oLITBal.mul(platformFee).div(
                     FEE_DENOMINATOR
                 );
-                crvBal = crvBal.sub(_platform);
-                IERC20(crv).safeTransfer(treasury, _platform);
+                oLITBal = oLITBal.sub(_platform);
+                IERC20(oLIT).safeTransfer(treasury, _platform);
             }
 
-            //remove incentives from balance
-            crvBal = crvBal.sub(_lockIncentive).sub(_callIncentive).sub(
+            // remove incentives from balance
+            oLITBal = oLITBal.sub(_lockIncentive).sub(_callIncentive).sub(
                 _stakerIncentive
             );
 
-            //send incentives for calling
-            IERC20(crv).safeTransfer(msg.sender, _callIncentive);
+            // send incentives for calling
+            IERC20(oLIT).safeTransfer(msg.sender, _callIncentive);
 
-            //send crv to lp provider reward contract
-            address rewardContract = pool.crvRewards;
-            IERC20(crv).safeTransfer(rewardContract, crvBal);
-            IRewards(rewardContract).queueNewRewards(crvBal);
+            // send oLIT to lp provider reward contract
+            address rewardContract = pool.oLITRewards;
+            IERC20(oLIT).safeTransfer(rewardContract, oLITBal);
+            IRewards(rewardContract).queueNewRewards(oLITBal);
 
-            //send lockers' share of crv to reward contract
-            IERC20(crv).safeTransfer(lockRewards, _lockIncentive);
+            // send lockers' share of oLIT to reward contract
+            IERC20(oLIT).safeTransfer(lockRewards, _lockIncentive);
             IRewards(lockRewards).queueNewRewards(_lockIncentive);
 
-            //send stakers's share of crv to reward contract
-            IERC20(crv).safeTransfer(stakerRewards, _stakerIncentive);
+            // send stakers's share of oLIT to reward contract
+            IERC20(oLIT).safeTransfer(stakerRewards, _stakerIncentive);
             IRewards(stakerRewards).queueNewRewards(_stakerIncentive);
         }
     }
@@ -535,13 +535,13 @@ contract Booster {
         return true;
     }
 
-    //callback from reward contract when crv is received.
+    //callback from reward contract when oLIT is received.
     function rewardClaimed(
         uint256 _pid,
         address _address,
         uint256 _amount
     ) external returns (bool) {
-        address rewardContract = poolInfo[_pid].crvRewards;
+        address rewardContract = poolInfo[_pid].oLITRewards;
         require(
             msg.sender == rewardContract || msg.sender == lockRewards,
             "!auth"

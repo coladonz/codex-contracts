@@ -9,7 +9,6 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "./cdxLIT.sol";
 import "./Interfaces.sol";
 
-/// @notice fork of CrvDepositor from convexfinance
 contract LITDepositor {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;

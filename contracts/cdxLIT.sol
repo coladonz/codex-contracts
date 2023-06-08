@@ -3,7 +3,6 @@ pragma solidity 0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/// @notice fork of cvxCRV from convexfinance
 contract cdxLIT is ERC20 {
     address public operator;
 

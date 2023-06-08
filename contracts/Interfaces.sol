@@ -141,21 +141,21 @@ interface IRewards {
     function earned(address account) external view returns (uint256);
 }
 
-// interface IStash {
-//     function stashRewards() external returns (bool);
+interface IStash {
+    function stashRewards() external returns (bool);
 
-//     function processStash() external returns (bool);
+    function processStash() external returns (bool);
 
-//     function claimRewards() external returns (bool);
+    function claimRewards() external returns (bool);
 
-//     function initialize(
-//         uint256 _pid,
-//         address _operator,
-//         address _staker,
-//         address _gauge,
-//         address _rewardFactory
-//     ) external;
-// }
+    function initialize(
+        uint256 _pid,
+        address _operator,
+        address _staker,
+        address _gauge,
+        address _rewardFactory
+    ) external;
+}
 
 interface IFeeDistro {
     function claim() external;
@@ -163,11 +163,11 @@ interface IFeeDistro {
     function token() external view returns (address);
 }
 
-// interface ITokenMinter {
-//     function mint(address, uint256) external;
+interface ITokenMinter {
+    function mint(address, uint256) external;
 
-//     function burn(address, uint256) external;
-// }
+    function burn(address, uint256) external;
+}
 
 interface IDeposit {
     function isShutdown() external view returns (bool);
@@ -199,36 +199,36 @@ interface IDeposit {
 //     function lockIncentive() external view returns (uint256);
 // }
 
-// interface IRewardFactory {
-//     function setAccess(address, bool) external;
+interface IRewardFactory {
+    function setAccess(address, bool) external;
 
-//     function CreateCrvRewards(uint256, address) external returns (address);
+    function CreateOLITRewards(uint256, address) external returns (address);
 
-//     function CreateTokenRewards(
-//         address,
-//         address,
-//         address
-//     ) external returns (address);
+    function CreateTokenRewards(
+        address,
+        address,
+        address
+    ) external returns (address);
 
-//     function activeRewardCount(address) external view returns (uint256);
+    function activeRewardCount(address) external view returns (uint256);
 
-//     function addActiveReward(address, uint256) external returns (bool);
+    function addActiveReward(address, uint256) external returns (bool);
 
-//     function removeActiveReward(address, uint256) external returns (bool);
-// }
+    function removeActiveReward(address, uint256) external returns (bool);
+}
 
-// interface IStashFactory {
-//     function CreateStash(
-//         uint256,
-//         address,
-//         address,
-//         uint256
-//     ) external returns (address);
-// }
+interface IStashFactory {
+    function CreateStash(
+        uint256,
+        address,
+        address,
+        uint256
+    ) external returns (address);
+}
 
-// interface ITokenFactory {
-//     function CreateDepositToken(address) external returns (address);
-// }
+interface ITokenFactory {
+    function CreateDepositToken(address) external returns (address);
+}
 
 // interface IPools {
 //     function addPool(

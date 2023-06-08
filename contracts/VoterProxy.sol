@@ -8,8 +8,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 import "./Interfaces.sol";
 
-/// @notice fork of CurveVoterProxy from convexfinance
-contract CodexVoterProxy {
+contract BunniVoterProxy {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address;
@@ -38,7 +37,7 @@ contract CodexVoterProxy {
     }
 
     function getName() external pure returns (string memory) {
-        return "CurveVoterProxy";
+        return "BunniVoterProxy";
     }
 
     function setOwner(address _owner) external {
