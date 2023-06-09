@@ -145,7 +145,7 @@ contract Booster {
         }
     }
 
-    // Set reward token and claim contract, get from Curve's registry
+    // Set reward token and claim contract, get from Bunni's registry
     function setFeeInfo(address _feeDistro) external {
         require(msg.sender == feeManager, "!auth");
 
@@ -524,7 +524,7 @@ contract Booster {
         return true;
     }
 
-    //claim fees from curve distro contract, put in lockers' reward contract
+    //claim fees from Bunni distro contract, put in lockers' reward contract
     function earmarkFees() external returns (bool) {
         //claim fee rewards
         IStaker(staker).claimFees(feeDistro, feeToken);
