@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
+pragma solidity 0.8.19;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import "./interfaces/MathUtil.sol";
 import "./interfaces/IStakingProxy.sol";
 import "./interfaces/IRewardStaking.sol";
 import "./interfaces/BoringMath.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "@openzeppelin/contracts/math/Math.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-
 
 /*
-CVX Locking contract for https://www.convexfinance.com/
-CVX locked in this contract will be entitled to voting rights for the Convex Finance platform
+CDX Locking contract for Codex
+CDX locked in this contract will be entitled to voting rights for the Codex platform
 Based on EPS Staking contract for http://ellipsis.finance/
 Based on SNX MultiRewards by iamdefinitelyahuman - https://github.com/iamdefinitelyahuman/multi-rewards
 
@@ -28,13 +27,11 @@ V2:
 - do not allow relocking directly to a new address
 */
 contract CdxLockerV2 is ReentrancyGuard, Ownable {
-
     using BoringMath for uint256;
     using BoringMath224 for uint224;
     using BoringMath112 for uint112;
     using BoringMath32 for uint32;
-    using SafeERC20
-    for IERC20;
+    using SafeERC20 for IERC20;
 
     /* ========== STATE VARIABLES ========== */
 
@@ -65,8 +62,8 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //token constants
-    IERC20 public constant stakingToken = IERC20(0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B); //cvx
-    address public constant cvxCrv = address(0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7);
+    IERC20 public immutable stakingToken; // CDX
+    address public immutable cdxLit; // cdxLIT
 
     //rewards
     address[] public rewardTokens;
@@ -82,7 +79,8 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     mapping(address => mapping(address => bool)) public rewardDistributors;
 
     // user -> reward token -> amount
-    mapping(address => mapping(address => uint256)) public userRewardPerTokenPaid;
+    mapping(address => mapping(address => uint256))
+        public userRewardPerTokenPaid;
     mapping(address => mapping(address => uint256)) public rewards;
 
     //supplies and epochs
@@ -95,7 +93,7 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     mapping(address => LockedBalance[]) public userLocks;
 
     //boost
-    address public boostPayment = address(0x1389388d01708118b497f59521f6943Be2541bb7);
+    address public boostPayment;
     uint256 public maximumBoostPayment = 0;
     uint256 public boostRate = 10000;
     uint256 public nextMaximumBoostPayment = 0;
@@ -106,7 +104,7 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     uint256 public minimumStake = 10000;
     uint256 public maximumStake = 10000;
     address public stakingProxy;
-    address public constant cvxcrvStaking = address(0x3Fe65692bfCD0e6CF84cB1E7d24108E434A7587e);
+    address public immutable cdxlitStaking; // BaseRewardPool
     uint256 public constant stakeOffsetOnLock = 500; //allow broader range for staking when depositing
 
     //management
@@ -123,28 +121,40 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor() public Ownable() {
-        _name = "Vote Locked Convex Token";
-        _symbol = "vlCVX";
+    constructor(
+        address _stakingToken,
+        address _cdxLit,
+        address _boostPayment,
+        address _cdxlitStaking
+    ) Ownable() {
+        _name = "Vote Locked Codex Token";
+        _symbol = "vlCDX";
         _decimals = 18;
 
-        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration);
-        epochs.push(Epoch({
-            supply: 0,
-            date: uint32(currentEpoch)
-        }));
+        stakingToken = IERC20(_stakingToken);
+        cdxLit = _cdxLit;
+        boostPayment = _boostPayment;
+        cdxlitStaking = _cdxlitStaking;
+
+        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(
+            rewardsDuration
+        );
+        epochs.push(Epoch({supply: 0, date: uint32(currentEpoch)}));
     }
 
     function decimals() public view returns (uint8) {
         return _decimals;
     }
+
     function name() public view returns (string memory) {
         return _name;
     }
+
     function symbol() public view returns (string memory) {
         return _symbol;
     }
-    function version() public view returns(uint256){
+
+    function version() public pure returns (uint256) {
         return 2;
     }
 
@@ -175,7 +185,7 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         rewardDistributors[_rewardsToken][_distributor] = _approved;
     }
 
-    //Set the staking contract for the underlying cvx
+    //Set the staking contract for the underlying cdx
     function setStakingContract(address _staking) external onlyOwner {
         require(stakingProxy == address(0), "!assign");
 
@@ -183,7 +193,10 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //set staking limits. will stake the mean of the two once either ratio is crossed
-    function setStakeLimits(uint256 _minimum, uint256 _maximum) external onlyOwner {
+    function setStakeLimits(
+        uint256 _minimum,
+        uint256 _maximum
+    ) external onlyOwner {
         require(_minimum <= denominator, "min range");
         require(_maximum <= denominator, "max range");
         require(_minimum <= _maximum, "min range");
@@ -193,7 +206,11 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //set boost parameters
-    function setBoost(uint256 _max, uint256 _rate, address _receivingAddress) external onlyOwner {
+    function setBoost(
+        uint256 _max,
+        uint256 _rate,
+        address _receivingAddress
+    ) external onlyOwner {
         require(_max < 1500, "over max payment"); //max 15%
         require(_rate < 30000, "over max rate"); //max 3x
         require(_receivingAddress != address(0), "invalid address"); //must point somewhere valid
@@ -203,7 +220,10 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //set kick incentive
-    function setKickIncentive(uint256 _rate, uint256 _delay) external onlyOwner {
+    function setKickIncentive(
+        uint256 _rate,
+        uint256 _delay
+    ) external onlyOwner {
         require(_rate <= 500, "over max rate"); //max 5% per epoch
         require(_delay >= 2, "min delay"); //minimum 2 epochs of grace
         kickRewardPerEpoch = _rate;
@@ -219,80 +239,116 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         isShutdown = true;
     }
 
-    //set approvals for staking cvx and cvxcrv
+    //set approvals for staking cdx and cdxlit
     function setApprovals() external {
-        IERC20(cvxCrv).safeApprove(cvxcrvStaking, 0);
-        IERC20(cvxCrv).safeApprove(cvxcrvStaking, uint256(-1));
+        IERC20(cdxLit).safeApprove(cdxlitStaking, 0);
+        IERC20(cdxLit).safeApprove(cdxlitStaking, type(uint256).max);
 
         IERC20(stakingToken).safeApprove(stakingProxy, 0);
-        IERC20(stakingToken).safeApprove(stakingProxy, uint256(-1));
+        IERC20(stakingToken).safeApprove(stakingProxy, type(uint256).max);
     }
 
     /* ========== VIEWS ========== */
 
-    function _rewardPerToken(address _rewardsToken) internal view returns(uint256) {
+    function _rewardPerToken(
+        address _rewardsToken
+    ) internal view returns (uint256) {
         if (boostedSupply == 0) {
             return rewardData[_rewardsToken].rewardPerTokenStored;
         }
         return
-        uint256(rewardData[_rewardsToken].rewardPerTokenStored).add(
-            _lastTimeRewardApplicable(rewardData[_rewardsToken].periodFinish).sub(
-                rewardData[_rewardsToken].lastUpdateTime).mul(
-                rewardData[_rewardsToken].rewardRate).mul(1e18).div(rewardData[_rewardsToken].useBoost ? boostedSupply : lockedSupply)
-        );
+            uint256(rewardData[_rewardsToken].rewardPerTokenStored).add(
+                _lastTimeRewardApplicable(
+                    rewardData[_rewardsToken].periodFinish
+                )
+                    .sub(rewardData[_rewardsToken].lastUpdateTime)
+                    .mul(rewardData[_rewardsToken].rewardRate)
+                    .mul(1e18)
+                    .div(
+                        rewardData[_rewardsToken].useBoost
+                            ? boostedSupply
+                            : lockedSupply
+                    )
+            );
     }
 
     function _earned(
         address _user,
         address _rewardsToken,
         uint256 _balance
-    ) internal view returns(uint256) {
-        return _balance.mul(
-            _rewardPerToken(_rewardsToken).sub(userRewardPerTokenPaid[_user][_rewardsToken])
-        ).div(1e18).add(rewards[_user][_rewardsToken]);
+    ) internal view returns (uint256) {
+        return
+            _balance
+                .mul(
+                    _rewardPerToken(_rewardsToken).sub(
+                        userRewardPerTokenPaid[_user][_rewardsToken]
+                    )
+                )
+                .div(1e18)
+                .add(rewards[_user][_rewardsToken]);
     }
 
-    function _lastTimeRewardApplicable(uint256 _finishTime) internal view returns(uint256){
+    function _lastTimeRewardApplicable(
+        uint256 _finishTime
+    ) internal view returns (uint256) {
         return Math.min(block.timestamp, _finishTime);
     }
 
-    function lastTimeRewardApplicable(address _rewardsToken) public view returns(uint256) {
-        return _lastTimeRewardApplicable(rewardData[_rewardsToken].periodFinish);
+    function lastTimeRewardApplicable(
+        address _rewardsToken
+    ) public view returns (uint256) {
+        return
+            _lastTimeRewardApplicable(rewardData[_rewardsToken].periodFinish);
     }
 
-    function rewardPerToken(address _rewardsToken) external view returns(uint256) {
+    function rewardPerToken(
+        address _rewardsToken
+    ) external view returns (uint256) {
         return _rewardPerToken(_rewardsToken);
     }
 
-    function getRewardForDuration(address _rewardsToken) external view returns(uint256) {
-        return uint256(rewardData[_rewardsToken].rewardRate).mul(rewardsDuration);
+    function getRewardForDuration(
+        address _rewardsToken
+    ) external view returns (uint256) {
+        return
+            uint256(rewardData[_rewardsToken].rewardRate).mul(rewardsDuration);
     }
 
     // Address and claimable amount of all reward tokens for the given account
-    function claimableRewards(address _account) external view returns(EarnedData[] memory userRewards) {
+    function claimableRewards(
+        address _account
+    ) external view returns (EarnedData[] memory userRewards) {
         userRewards = new EarnedData[](rewardTokens.length);
         Balances storage userBalance = balances[_account];
         uint256 boostedBal = userBalance.boosted;
         for (uint256 i = 0; i < userRewards.length; i++) {
             address token = rewardTokens[i];
             userRewards[i].token = token;
-            userRewards[i].amount = _earned(_account, token, rewardData[token].useBoost ? boostedBal : userBalance.locked);
+            userRewards[i].amount = _earned(
+                _account,
+                token,
+                rewardData[token].useBoost ? boostedBal : userBalance.locked
+            );
         }
         return userRewards;
     }
 
     // Total BOOSTED balance of an account, including unlocked but not withdrawn tokens
-    function rewardWeightOf(address _user) view external returns(uint256 amount) {
+    function rewardWeightOf(
+        address _user
+    ) external view returns (uint256 amount) {
         return balances[_user].boosted;
     }
 
     // total token balance of an account, including unlocked but not withdrawn tokens
-    function lockedBalanceOf(address _user) view external returns(uint256 amount) {
+    function lockedBalanceOf(
+        address _user
+    ) external view returns (uint256 amount) {
         return balances[_user].locked;
     }
 
     //BOOSTED balance of an account which only includes properly locked tokens as of the most recent eligible epoch
-    function balanceOf(address _user) view external returns(uint256 amount) {
+    function balanceOf(address _user) external view returns (uint256 amount) {
         LockedBalance[] storage locks = userLocks[_user];
         Balances storage userBalance = balances[_user];
         uint256 nextUnlockIndex = userBalance.nextUnlockIndex;
@@ -312,8 +368,14 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         }
 
         //also remove amount locked in the next epoch
-        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration);
-        if (locksLength > 0 && uint256(locks[locksLength - 1].unlockTime).sub(lockDuration) > currentEpoch) {
+        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(
+            rewardsDuration
+        );
+        if (
+            locksLength > 0 &&
+            uint256(locks[locksLength - 1].unlockTime).sub(lockDuration) >
+            currentEpoch
+        ) {
             amount = amount.sub(locks[locksLength - 1].boosted);
         }
 
@@ -321,7 +383,10 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //BOOSTED balance of an account which only includes properly locked tokens at the given epoch
-    function balanceAtEpochOf(uint256 _epoch, address _user) view external returns(uint256 amount) {
+    function balanceAtEpochOf(
+        uint256 _epoch,
+        address _user
+    ) external view returns (uint256 amount) {
         LockedBalance[] storage locks = userLocks[_user];
 
         //get timestamp of given epoch index
@@ -348,21 +413,32 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //return currently locked but not active balance
-    function pendingLockOf(address _user) view external returns(uint256 amount) {
+    function pendingLockOf(
+        address _user
+    ) external view returns (uint256 amount) {
         LockedBalance[] storage locks = userLocks[_user];
 
         uint256 locksLength = locks.length;
 
         //return amount if latest lock is in the future
-        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration);
-        if (locksLength > 0 && uint256(locks[locksLength - 1].unlockTime).sub(lockDuration) > currentEpoch) {
+        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(
+            rewardsDuration
+        );
+        if (
+            locksLength > 0 &&
+            uint256(locks[locksLength - 1].unlockTime).sub(lockDuration) >
+            currentEpoch
+        ) {
             return locks[locksLength - 1].boosted;
         }
 
         return 0;
     }
 
-    function pendingLockAtEpochOf(uint256 _epoch, address _user) view external returns(uint256 amount) {
+    function pendingLockAtEpochOf(
+        uint256 _epoch,
+        address _user
+    ) external view returns (uint256 amount) {
         LockedBalance[] storage locks = userLocks[_user];
 
         //get next epoch from the given epoch index
@@ -371,11 +447,11 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         //traverse inversely to make more current queries more gas efficient
         for (uint i = locks.length - 1; i + 1 != 0; i--) {
             uint256 lockEpoch = uint256(locks[i].unlockTime).sub(lockDuration);
-            
+
             //return the next epoch balance
             if (lockEpoch == nextEpoch) {
                 return locks[i].boosted;
-            }else if(lockEpoch < nextEpoch){
+            } else if (lockEpoch < nextEpoch) {
                 //no need to check anymore
                 break;
             }
@@ -385,14 +461,15 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //supply of all properly locked BOOSTED balances at most recent eligible epoch
-    function totalSupply() view external returns(uint256 supply) {
-
-        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration);
+    function totalSupply() external view returns (uint256 supply) {
+        uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(
+            rewardsDuration
+        );
         uint256 cutoffEpoch = currentEpoch.sub(lockDuration);
         uint256 epochindex = epochs.length;
 
         //do not include next epoch's supply
-        if ( uint256(epochs[epochindex - 1].date) > currentEpoch ) {
+        if (uint256(epochs[epochindex - 1].date) > currentEpoch) {
             epochindex--;
         }
 
@@ -409,9 +486,12 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //supply of all properly locked BOOSTED balances at the given epoch
-    function totalSupplyAtEpoch(uint256 _epoch) view external returns(uint256 supply) {
-
-        uint256 epochStart = uint256(epochs[_epoch].date).div(rewardsDuration).mul(rewardsDuration);
+    function totalSupplyAtEpoch(
+        uint256 _epoch
+    ) external view returns (uint256 supply) {
+        uint256 epochStart = uint256(epochs[_epoch].date)
+            .div(rewardsDuration)
+            .mul(rewardsDuration);
         uint256 cutoffEpoch = epochStart.sub(lockDuration);
 
         //traverse inversely to make more current queries more gas efficient
@@ -427,7 +507,7 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //find an epoch index based on timestamp
-    function findEpochId(uint256 _time) view external returns(uint256 epoch) {
+    function findEpochId(uint256 _time) external view returns (uint256 epoch) {
         uint256 max = epochs.length - 1;
         uint256 min = 0;
 
@@ -439,28 +519,31 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
             uint256 mid = (min + max + 1) / 2;
             uint256 midEpochBlock = epochs[mid].date;
-            if(midEpochBlock == _time){
+            if (midEpochBlock == _time) {
                 //found
                 return mid;
-            }else if (midEpochBlock < _time) {
+            } else if (midEpochBlock < _time) {
                 min = mid;
-            } else{
+            } else {
                 max = mid - 1;
             }
         }
         return min;
     }
 
-
     // Information on a user's locked balances
     function lockedBalances(
         address _user
-    ) view external returns(
-        uint256 total,
-        uint256 unlockable,
-        uint256 locked,
-        LockedBalance[] memory lockData
-    ) {
+    )
+        external
+        view
+        returns (
+            uint256 total,
+            uint256 unlockable,
+            uint256 locked,
+            LockedBalance[] memory lockData
+        )
+    {
         LockedBalance[] storage locks = userLocks[_user];
         Balances storage userBalance = balances[_user];
         uint256 nextUnlockIndex = userBalance.nextUnlockIndex;
@@ -481,7 +564,7 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //number of epochs
-    function epochCount() external view returns(uint256) {
+    function epochCount() external view returns (uint256) {
         return epochs.length;
     }
 
@@ -494,7 +577,11 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     //insert a new epoch if needed. fill in any gaps
     function _checkpointEpoch() internal {
         //create new epoch in the future where new non-active locks will lock to
-        uint256 nextEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration).add(rewardsDuration);
+        uint256 nextEpoch = block
+            .timestamp
+            .div(rewardsDuration)
+            .mul(rewardsDuration)
+            .add(rewardsDuration);
         uint256 epochindex = epochs.length;
 
         //first epoch add in constructor, no need to check 0 length
@@ -502,27 +589,28 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         //check to add
         if (epochs[epochindex - 1].date < nextEpoch) {
             //fill any epoch gaps
-            while(epochs[epochs.length-1].date != nextEpoch){
-                uint256 nextEpochDate = uint256(epochs[epochs.length-1].date).add(rewardsDuration);
-                epochs.push(Epoch({
-                    supply: 0,
-                    date: uint32(nextEpochDate)
-                }));
+            while (epochs[epochs.length - 1].date != nextEpoch) {
+                uint256 nextEpochDate = uint256(epochs[epochs.length - 1].date)
+                    .add(rewardsDuration);
+                epochs.push(Epoch({supply: 0, date: uint32(nextEpochDate)}));
             }
 
             //update boost parameters on a new epoch
-            if(boostRate != nextBoostRate){
+            if (boostRate != nextBoostRate) {
                 boostRate = nextBoostRate;
             }
-            if(maximumBoostPayment != nextMaximumBoostPayment){
+            if (maximumBoostPayment != nextMaximumBoostPayment) {
                 maximumBoostPayment = nextMaximumBoostPayment;
             }
         }
     }
 
     // Locked tokens cannot be withdrawn for lockDuration and are eligible to receive stakingReward rewards
-    function lock(address _account, uint256 _amount, uint256 _spendRatio) external nonReentrant updateReward(_account) {
-
+    function lock(
+        address _account,
+        uint256 _amount,
+        uint256 _spendRatio
+    ) external nonReentrant updateReward(_account) {
         //pull tokens
         stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
 
@@ -531,7 +619,12 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //lock tokens
-    function _lock(address _account, uint256 _amount, uint256 _spendRatio, bool _isRelock) internal {
+    function _lock(
+        address _account,
+        uint256 _amount,
+        uint256 _spendRatio,
+        bool _isRelock
+    ) internal {
         require(_amount > 0, "Cannot stake 0");
         require(_spendRatio <= maximumBoostPayment, "over max spend");
         require(!isShutdown, "shutdown");
@@ -543,9 +636,13 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
         //calc lock and boosted amount
         uint256 spendAmount = _amount.mul(_spendRatio).div(denominator);
-        uint256 boostRatio = boostRate.mul(_spendRatio).div(maximumBoostPayment==0?1:maximumBoostPayment);
+        uint256 boostRatio = boostRate.mul(_spendRatio).div(
+            maximumBoostPayment == 0 ? 1 : maximumBoostPayment
+        );
         uint112 lockAmount = _amount.sub(spendAmount).to112();
-        uint112 boostedAmount = _amount.add(_amount.mul(boostRatio).div(denominator)).to112();
+        uint112 boostedAmount = _amount
+            .add(_amount.mul(boostRatio).div(denominator))
+            .to112();
 
         //add user balances
         bal.locked = bal.locked.add(lockAmount);
@@ -556,9 +653,11 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         boostedSupply = boostedSupply.add(boostedAmount);
 
         //add user lock records or add to current
-        uint256 lockEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration);
+        uint256 lockEpoch = block.timestamp.div(rewardsDuration).mul(
+            rewardsDuration
+        );
         //if a fresh lock, add on an extra duration period
-        if(!_isRelock){
+        if (!_isRelock) {
             lockEpoch = lockEpoch.add(rewardsDuration);
         }
         uint256 unlockTime = lockEpoch.add(lockDuration);
@@ -566,27 +665,29 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
         //if the latest user lock is smaller than this lock, always just add new entry to the end of the list
         if (idx == 0 || userLocks[_account][idx - 1].unlockTime < unlockTime) {
-            userLocks[_account].push(LockedBalance({
-                amount: lockAmount,
-                boosted: boostedAmount,
-                unlockTime: uint32(unlockTime)
-            }));
+            userLocks[_account].push(
+                LockedBalance({
+                    amount: lockAmount,
+                    boosted: boostedAmount,
+                    unlockTime: uint32(unlockTime)
+                })
+            );
         } else {
             //else add to a current lock
 
             //if latest lock is further in the future, lower index
             //this can only happen if relocking an expired lock after creating a new lock
-            if(userLocks[_account][idx - 1].unlockTime > unlockTime){
+            if (userLocks[_account][idx - 1].unlockTime > unlockTime) {
                 idx--;
             }
 
             //if idx points to the epoch when same unlock time, update
             //(this is always true with a normal lock but maybe not with relock)
-            if(userLocks[_account][idx - 1].unlockTime == unlockTime){
+            if (userLocks[_account][idx - 1].unlockTime == unlockTime) {
                 LockedBalance storage userL = userLocks[_account][idx - 1];
                 userL.amount = userL.amount.add(lockAmount);
                 userL.boosted = userL.boosted.add(boostedAmount);
-            }else{
+            } else {
                 //can only enter here if a relock is made after a lock and there's no lock entry
                 //for the current epoch.
                 //ex a list of locks such as "[...][older][current*][next]" but without a "current" lock
@@ -602,11 +703,13 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
                 LockedBalance storage userL = userLocks[_account][idx - 1];
 
                 //add a copy to end of list
-                userLocks[_account].push(LockedBalance({
-                    amount: userL.amount,
-                    boosted: userL.boosted,
-                    unlockTime: userL.unlockTime
-                }));
+                userLocks[_account].push(
+                    LockedBalance({
+                        amount: userL.amount,
+                        boosted: userL.boosted,
+                        unlockTime: userL.unlockTime
+                    })
+                );
 
                 //insert current epoch lock entry by overwriting the entry at length-2
                 userL.amount = lockAmount;
@@ -615,11 +718,10 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
             }
         }
 
-        
         //update epoch supply, epoch checkpointed above so safe to add to latest
         uint256 eIndex = epochs.length - 1;
         //if relock, epoch should be current and not next, thus need to decrease index to length-2
-        if(_isRelock){
+        if (_isRelock) {
             eIndex--;
         }
         Epoch storage e = epochs[eIndex];
@@ -637,15 +739,25 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     // Withdraw all currently locked tokens where the unlock time has passed
-    function _processExpiredLocks(address _account, bool _relock, uint256 _spendRatio, address _withdrawTo, address _rewardAddress, uint256 _checkDelay) internal updateReward(_account) {
+    function _processExpiredLocks(
+        address _account,
+        bool _relock,
+        uint256 _spendRatio,
+        address _withdrawTo,
+        address _rewardAddress,
+        uint256 _checkDelay
+    ) internal updateReward(_account) {
         LockedBalance[] storage locks = userLocks[_account];
         Balances storage userBalance = balances[_account];
         uint112 locked;
         uint112 boostedAmount;
         uint256 length = locks.length;
         uint256 reward = 0;
-        
-        if (isShutdown || locks[length - 1].unlockTime <= block.timestamp.sub(_checkDelay)) {
+
+        if (
+            isShutdown ||
+            locks[length - 1].unlockTime <= block.timestamp.sub(_checkDelay)
+        ) {
             //if time is beyond last lock, can just bundle everything together
             locked = userBalance.locked;
             boostedAmount = userBalance.boosted;
@@ -658,19 +770,30 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
             //but this section is supposed to be for quick and easy low gas processing of all locks
             //we'll assume that if the reward was good enough someone would have processed at an earlier epoch
             if (_checkDelay > 0) {
-                uint256 currentEpoch = block.timestamp.sub(_checkDelay).div(rewardsDuration).mul(rewardsDuration);
-                uint256 epochsover = currentEpoch.sub(uint256(locks[length - 1].unlockTime)).div(rewardsDuration);
-                uint256 rRate = MathUtil.min(kickRewardPerEpoch.mul(epochsover+1), denominator);
-                reward = uint256(locks[length - 1].amount).mul(rRate).div(denominator);
+                uint256 currentEpoch = block
+                    .timestamp
+                    .sub(_checkDelay)
+                    .div(rewardsDuration)
+                    .mul(rewardsDuration);
+                uint256 epochsover = currentEpoch
+                    .sub(uint256(locks[length - 1].unlockTime))
+                    .div(rewardsDuration);
+                uint256 rRate = MathUtil.min(
+                    kickRewardPerEpoch.mul(epochsover + 1),
+                    denominator
+                );
+                reward = uint256(locks[length - 1].amount).mul(rRate).div(
+                    denominator
+                );
             }
         } else {
-
             //use a processed index(nextUnlockIndex) to not loop as much
             //deleting does not change array length
             uint32 nextUnlockIndex = userBalance.nextUnlockIndex;
             for (uint i = nextUnlockIndex; i < length; i++) {
                 //unlock time must be less or equal to time
-                if (locks[i].unlockTime > block.timestamp.sub(_checkDelay)) break;
+                if (locks[i].unlockTime > block.timestamp.sub(_checkDelay))
+                    break;
 
                 //add to cumulative amounts
                 locked = locked.add(locks[i].amount);
@@ -679,10 +802,21 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
                 //check for kick reward
                 //each epoch over due increases reward
                 if (_checkDelay > 0) {
-                    uint256 currentEpoch = block.timestamp.sub(_checkDelay).div(rewardsDuration).mul(rewardsDuration);
-                    uint256 epochsover = currentEpoch.sub(uint256(locks[i].unlockTime)).div(rewardsDuration);
-                    uint256 rRate = MathUtil.min(kickRewardPerEpoch.mul(epochsover+1), denominator);
-                    reward = reward.add( uint256(locks[i].amount).mul(rRate).div(denominator));
+                    uint256 currentEpoch = block
+                        .timestamp
+                        .sub(_checkDelay)
+                        .div(rewardsDuration)
+                        .mul(rewardsDuration);
+                    uint256 epochsover = currentEpoch
+                        .sub(uint256(locks[i].unlockTime))
+                        .div(rewardsDuration);
+                    uint256 rRate = MathUtil.min(
+                        kickRewardPerEpoch.mul(epochsover + 1),
+                        denominator
+                    );
+                    reward = reward.add(
+                        uint256(locks[i].amount).mul(rRate).div(denominator)
+                    );
                 }
                 //set next unlock index
                 nextUnlockIndex++;
@@ -703,26 +837,28 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         //send process incentive
         if (reward > 0) {
             //if theres a reward(kicked), it will always be a withdraw only
-            //preallocate enough cvx from stake contract to pay for both reward and withdraw
-            allocateCVXForTransfer(uint256(locked));
+            //preallocate enough cdx from stake contract to pay for both reward and withdraw
+            allocateCDXForTransfer(uint256(locked));
 
             //reduce return amount by the kick reward
             locked = locked.sub(reward.to112());
-            
+
             //transfer reward
-            transferCVX(_rewardAddress, reward, false);
+            transferCDX(_rewardAddress, reward, false);
 
             emit KickReward(_rewardAddress, _account, reward);
-        }else if(_spendRatio > 0){
-            //preallocate enough cvx to transfer the boost cost
-            allocateCVXForTransfer( uint256(locked).mul(_spendRatio).div(denominator) );
+        } else if (_spendRatio > 0) {
+            //preallocate enough cdx to transfer the boost cost
+            allocateCDXForTransfer(
+                uint256(locked).mul(_spendRatio).div(denominator)
+            );
         }
 
         //relock or return to user
         if (_relock) {
             _lock(_withdrawTo, locked, _spendRatio, true);
         } else {
-            transferCVX(_withdrawTo, locked, true);
+            transferCDX(_withdrawTo, locked, true);
         }
     }
 
@@ -738,11 +874,18 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
     function kickExpiredLocks(address _account) external nonReentrant {
         //allow kick after grace period of 'kickRewardEpochDelay'
-        _processExpiredLocks(_account, false, 0, _account, msg.sender, rewardsDuration.mul(kickRewardEpochDelay));
+        _processExpiredLocks(
+            _account,
+            false,
+            0,
+            _account,
+            msg.sender,
+            rewardsDuration.mul(kickRewardEpochDelay)
+        );
     }
 
-    //pull required amount of cvx from staking for an upcoming transfer
-    function allocateCVXForTransfer(uint256 _amount) internal{
+    //pull required amount of cdx from staking for an upcoming transfer
+    function allocateCDXForTransfer(uint256 _amount) internal {
         uint256 balance = stakingToken.balanceOf(address(this));
         if (_amount > balance) {
             IStakingProxy(stakingProxy).withdraw(_amount.sub(balance));
@@ -750,19 +893,23 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     //transfer helper: pull enough from staking, transfer, updating staking ratio
-    function transferCVX(address _account, uint256 _amount, bool _updateStake) internal {
-        //allocate enough cvx from staking for the transfer
-        allocateCVXForTransfer(_amount);
+    function transferCDX(
+        address _account,
+        uint256 _amount,
+        bool _updateStake
+    ) internal {
+        //allocate enough cdx from staking for the transfer
+        allocateCDXForTransfer(_amount);
         //transfer
         stakingToken.safeTransfer(_account, _amount);
 
         //update staking
-        if(_updateStake){
+        if (_updateStake) {
             updateStakeRatio(0);
         }
     }
 
-    //calculate how much cvx should be staked. update if needed
+    //calculate how much cdx should be staked. update if needed
     function updateStakeRatio(uint256 _offset) internal {
         if (isShutdown) return;
 
@@ -770,8 +917,8 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         uint256 local = stakingToken.balanceOf(address(this));
         uint256 staked = IStakingProxy(stakingProxy).getBalance();
         uint256 total = local.add(staked);
-        
-        if(total == 0) return;
+
+        if (total == 0) return;
 
         //current staked ratio
         uint256 ratio = staked.mul(denominator).div(total);
@@ -792,14 +939,17 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     // Claim all pending rewards
-    function getReward(address _account, bool _stake) public nonReentrant updateReward(_account) {
+    function getReward(
+        address _account,
+        bool _stake
+    ) public nonReentrant updateReward(_account) {
         for (uint i; i < rewardTokens.length; i++) {
             address _rewardsToken = rewardTokens[i];
             uint256 reward = rewards[_account][_rewardsToken];
             if (reward > 0) {
                 rewards[_account][_rewardsToken] = 0;
-                if (_rewardsToken == cvxCrv && _stake) {
-                    IRewardStaking(cvxcrvStaking).stakeFor(_account, reward);
+                if (_rewardsToken == cdxLit && _stake) {
+                    IRewardStaking(cdxlitStaking).stakeFor(_account, reward);
                 } else {
                     IERC20(_rewardsToken).safeTransfer(_account, reward);
                 }
@@ -809,10 +959,9 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     }
 
     // claim all pending rewards
-    function getReward(address _account) external{
-        getReward(_account,false);
+    function getReward(address _account) external {
+        getReward(_account, false);
     }
-
 
     /* ========== RESTRICTED FUNCTIONS ========== */
 
@@ -822,16 +971,24 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
         if (block.timestamp >= rdata.periodFinish) {
             rdata.rewardRate = _reward.div(rewardsDuration).to208();
         } else {
-            uint256 remaining = uint256(rdata.periodFinish).sub(block.timestamp);
+            uint256 remaining = uint256(rdata.periodFinish).sub(
+                block.timestamp
+            );
             uint256 leftover = remaining.mul(rdata.rewardRate);
-            rdata.rewardRate = _reward.add(leftover).div(rewardsDuration).to208();
+            rdata.rewardRate = _reward
+                .add(leftover)
+                .div(rewardsDuration)
+                .to208();
         }
 
         rdata.lastUpdateTime = block.timestamp.to40();
         rdata.periodFinish = block.timestamp.add(rewardsDuration).to40();
     }
 
-    function notifyRewardAmount(address _rewardsToken, uint256 _reward) external updateReward(address(0)) {
+    function notifyRewardAmount(
+        address _rewardsToken,
+        uint256 _reward
+    ) external updateReward(address(0)) {
         require(rewardDistributors[_rewardsToken][msg.sender]);
         require(_reward > 0, "No reward");
 
@@ -839,20 +996,33 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
         // handle the transfer of reward tokens via `transferFrom` to reduce the number
         // of transactions required and ensure correctness of the _reward amount
-        IERC20(_rewardsToken).safeTransferFrom(msg.sender, address(this), _reward);
-        
+        IERC20(_rewardsToken).safeTransferFrom(
+            msg.sender,
+            address(this),
+            _reward
+        );
+
         emit RewardAdded(_rewardsToken, _reward);
 
-        if(_rewardsToken == cvxCrv){
+        if (_rewardsToken == cdxLit) {
             //update staking ratio if main reward
             updateStakeRatio(0);
         }
     }
 
     // Added to support recovering LP Rewards from other systems such as BAL to be distributed to holders
-    function recoverERC20(address _tokenAddress, uint256 _tokenAmount) external onlyOwner {
-        require(_tokenAddress != address(stakingToken), "Cannot withdraw staking token");
-        require(rewardData[_tokenAddress].lastUpdateTime == 0, "Cannot withdraw reward token");
+    function recoverERC20(
+        address _tokenAddress,
+        uint256 _tokenAmount
+    ) external onlyOwner {
+        require(
+            _tokenAddress != address(stakingToken),
+            "Cannot withdraw staking token"
+        );
+        require(
+            rewardData[_tokenAddress].lastUpdateTime == 0,
+            "Cannot withdraw reward token"
+        );
         IERC20(_tokenAddress).safeTransfer(owner(), _tokenAmount);
         emit Recovered(_tokenAddress, _tokenAmount);
     }
@@ -860,17 +1030,28 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
     /* ========== MODIFIERS ========== */
 
     modifier updateReward(address _account) {
-        {//stack too deep
+        {
+            //stack too deep
             Balances storage userBalance = balances[_account];
             uint256 boostedBal = userBalance.boosted;
             for (uint i = 0; i < rewardTokens.length; i++) {
                 address token = rewardTokens[i];
-                rewardData[token].rewardPerTokenStored = _rewardPerToken(token).to208();
-                rewardData[token].lastUpdateTime = _lastTimeRewardApplicable(rewardData[token].periodFinish).to40();
+                rewardData[token].rewardPerTokenStored = _rewardPerToken(token)
+                    .to208();
+                rewardData[token].lastUpdateTime = _lastTimeRewardApplicable(
+                    rewardData[token].periodFinish
+                ).to40();
                 if (_account != address(0)) {
                     //check if reward is boostable or not. use boosted or locked balance accordingly
-                    rewards[_account][token] = _earned(_account, token, rewardData[token].useBoost ? boostedBal : userBalance.locked );
-                    userRewardPerTokenPaid[_account][token] = rewardData[token].rewardPerTokenStored;
+                    rewards[_account][token] = _earned(
+                        _account,
+                        token,
+                        rewardData[token].useBoost
+                            ? boostedBal
+                            : userBalance.locked
+                    );
+                    userRewardPerTokenPaid[_account][token] = rewardData[token]
+                        .rewardPerTokenStored;
                 }
             }
         }
@@ -879,9 +1060,23 @@ contract CdxLockerV2 is ReentrancyGuard, Ownable {
 
     /* ========== EVENTS ========== */
     event RewardAdded(address indexed _token, uint256 _reward);
-    event Staked(address indexed _user, uint256 indexed _epoch, uint256 _paidAmount, uint256 _lockedAmount, uint256 _boostedAmount);
+    event Staked(
+        address indexed _user,
+        uint256 indexed _epoch,
+        uint256 _paidAmount,
+        uint256 _lockedAmount,
+        uint256 _boostedAmount
+    );
     event Withdrawn(address indexed _user, uint256 _amount, bool _relocked);
-    event KickReward(address indexed _user, address indexed _kicked, uint256 _reward);
-    event RewardPaid(address indexed _user, address indexed _rewardsToken, uint256 _reward);
+    event KickReward(
+        address indexed _user,
+        address indexed _kicked,
+        uint256 _reward
+    );
+    event RewardPaid(
+        address indexed _user,
+        address indexed _rewardsToken,
+        uint256 _reward
+    );
     event Recovered(address _token, uint256 _amount);
 }
