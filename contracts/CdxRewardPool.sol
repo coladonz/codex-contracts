@@ -19,9 +19,9 @@ contract CdxRewardPool {
     uint256 public constant FEE_DENOMINATOR = 10000;
 
     address public immutable operator;
-    address public immutable crvDeposits;
-    address public immutable cvxCrvRewards;
-    IERC20 public immutable cvxCrvToken;
+    address public immutable litDeposits;
+    address public immutable cdxLitRewards;
+    IERC20 public immutable cdxLitToken;
     address public immutable rewardManager;
 
     uint256 public periodFinish = 0;
@@ -47,9 +47,9 @@ contract CdxRewardPool {
     constructor(
         address stakingToken_,
         address rewardToken_,
-        address crvDeposits_,
-        address cvxCrvRewards_,
-        address cvxCrvToken_,
+        address litDeposits_,
+        address cdxLitRewards_,
+        address cdxLitToken_,
         address operator_,
         address rewardManager_
     ) {
@@ -57,9 +57,9 @@ contract CdxRewardPool {
         rewardToken = IERC20(rewardToken_);
         operator = operator_;
         rewardManager = rewardManager_;
-        crvDeposits = crvDeposits_;
-        cvxCrvRewards = cvxCrvRewards_;
-        cvxCrvToken = IERC20(cvxCrvToken_);
+        litDeposits = litDeposits_;
+        cdxLitRewards = cdxLitRewards_;
+        cdxLitToken = IERC20(cdxLitToken_);
     }
 
     function totalSupply() public view returns (uint256) {
@@ -124,12 +124,12 @@ contract CdxRewardPool {
     }
 
     function earned(address account) external view returns (uint256) {
-        uint256 depositFeeRate = ILitDepositor(crvDeposits).lockIncentive();
+        uint256 depositFeeRate = ILitDepositor(litDeposits).lockIncentive();
 
         uint256 r = earnedReward(account);
         uint256 fees = r.mul(depositFeeRate).div(FEE_DENOMINATOR);
 
-        //fees dont apply until whitelist+vecrv lock begins so will report
+        //fees dont apply until whitelist+velit lock begins so will report
         //slightly less value than what is actually received.
         return r.sub(fees);
     }
@@ -211,19 +211,19 @@ contract CdxRewardPool {
         uint256 reward = earnedReward(_account);
         if (reward > 0) {
             rewards[_account] = 0;
-            rewardToken.safeApprove(crvDeposits, 0);
-            rewardToken.safeApprove(crvDeposits, reward);
-            ILitDepositor(crvDeposits).deposit(reward, false);
+            rewardToken.safeApprove(litDeposits, 0);
+            rewardToken.safeApprove(litDeposits, reward);
+            ILitDepositor(litDeposits).deposit(reward, false);
 
-            uint256 cvxCrvBalance = cvxCrvToken.balanceOf(address(this));
+            uint256 cdxLitBalance = cdxLitToken.balanceOf(address(this));
             if (_stake) {
-                IERC20(cvxCrvToken).safeApprove(cvxCrvRewards, 0);
-                IERC20(cvxCrvToken).safeApprove(cvxCrvRewards, cvxCrvBalance);
-                IRewards(cvxCrvRewards).stakeFor(_account, cvxCrvBalance);
+                IERC20(cdxLitToken).safeApprove(cdxLitRewards, 0);
+                IERC20(cdxLitToken).safeApprove(cdxLitRewards, cdxLitBalance);
+                IRewards(cdxLitRewards).stakeFor(_account, cdxLitBalance);
             } else {
-                cvxCrvToken.safeTransfer(_account, cvxCrvBalance);
+                cdxLitToken.safeTransfer(_account, cdxLitBalance);
             }
-            emit RewardPaid(_account, cvxCrvBalance);
+            emit RewardPaid(_account, cdxLitBalance);
         }
 
         //also get rewards from linked rewards

@@ -230,31 +230,31 @@ interface ITokenFactory {
     function CreateDepositToken(address) external returns (address);
 }
 
-// interface IPools {
-//     function addPool(
-//         address _lptoken,
-//         address _gauge,
-//         uint256 _stashVersion
-//     ) external returns (bool);
+interface IPools {
+    function addPool(
+        address _lptoken,
+        address _gauge,
+        uint256 _stashVersion
+    ) external returns (bool);
 
-//     function forceAddPool(
-//         address _lptoken,
-//         address _gauge,
-//         uint256 _stashVersion
-//     ) external returns (bool);
+    function forceAddPool(
+        address _lptoken,
+        address _gauge,
+        uint256 _stashVersion
+    ) external returns (bool);
 
-//     function shutdownPool(uint256 _pid) external returns (bool);
+    function shutdownPool(uint256 _pid) external returns (bool);
 
-//     function poolInfo(
-//         uint256
-//     ) external view returns (address, address, address, address, address, bool);
+    function poolInfo(
+        uint256
+    ) external view returns (address, address, address, address, address, bool);
 
-//     function poolLength() external view returns (uint256);
+    function poolLength() external view returns (uint256);
 
-//     function gaugeMap(address) external view returns (bool);
+    function gaugeMap(address) external view returns (bool);
 
-//     function setPoolManager(address _poolM) external;
-// }
+    function setPoolManager(address _poolM) external;
+}
 
 // interface IVestedEscrow {
 //     function fund(

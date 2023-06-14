@@ -32,6 +32,7 @@
     "@chainlink/contracts": "^0.4.1",
     "@openzeppelin/contracts": "^4.9.0",
     "@openzeppelin/contracts-upgradeable": "^4.9.0",
+    "@openzeppelin/hardhat-upgrades": "^1.27.0",
     "dotenv": "^12.0.3",
     "hardhat-deploy": "^0.11.10",
     "merkletreejs": "^0.2.24",
