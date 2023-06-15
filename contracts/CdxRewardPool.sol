@@ -19,9 +19,6 @@ contract CdxRewardPool {
     uint256 public constant FEE_DENOMINATOR = 10000;
 
     address public immutable operator;
-    address public immutable litDeposits;
-    address public immutable cdxLitRewards;
-    IERC20 public immutable cdxLitToken;
     address public immutable rewardManager;
 
     uint256 public periodFinish = 0;
@@ -47,9 +44,6 @@ contract CdxRewardPool {
     constructor(
         address stakingToken_,
         address rewardToken_,
-        address litDeposits_,
-        address cdxLitRewards_,
-        address cdxLitToken_,
         address operator_,
         address rewardManager_
     ) {
@@ -57,9 +51,6 @@ contract CdxRewardPool {
         rewardToken = IERC20(rewardToken_);
         operator = operator_;
         rewardManager = rewardManager_;
-        litDeposits = litDeposits_;
-        cdxLitRewards = cdxLitRewards_;
-        cdxLitToken = IERC20(cdxLitToken_);
     }
 
     function totalSupply() public view returns (uint256) {
@@ -124,14 +115,7 @@ contract CdxRewardPool {
     }
 
     function earned(address account) external view returns (uint256) {
-        uint256 depositFeeRate = ILitDepositor(litDeposits).lockIncentive();
-
-        uint256 r = earnedReward(account);
-        uint256 fees = r.mul(depositFeeRate).div(FEE_DENOMINATOR);
-
-        //fees dont apply until whitelist+velit lock begins so will report
-        //slightly less value than what is actually received.
-        return r.sub(fees);
+        return earnedReward(account);
     }
 
     function stake(uint256 _amount) public updateReward(msg.sender) {
@@ -195,7 +179,7 @@ contract CdxRewardPool {
         emit Withdrawn(msg.sender, _amount);
 
         if (claim) {
-            getReward(msg.sender, true, false);
+            getReward(msg.sender, true);
         }
     }
 
@@ -205,25 +189,13 @@ contract CdxRewardPool {
 
     function getReward(
         address _account,
-        bool _claimExtras,
-        bool _stake
+        bool _claimExtras
     ) public updateReward(_account) {
         uint256 reward = earnedReward(_account);
         if (reward > 0) {
             rewards[_account] = 0;
-            rewardToken.safeApprove(litDeposits, 0);
-            rewardToken.safeApprove(litDeposits, reward);
-            ILitDepositor(litDeposits).deposit(reward, false);
-
-            uint256 cdxLitBalance = cdxLitToken.balanceOf(address(this));
-            if (_stake) {
-                IERC20(cdxLitToken).safeApprove(cdxLitRewards, 0);
-                IERC20(cdxLitToken).safeApprove(cdxLitRewards, cdxLitBalance);
-                IRewards(cdxLitRewards).stakeFor(_account, cdxLitBalance);
-            } else {
-                cdxLitToken.safeTransfer(_account, cdxLitBalance);
-            }
-            emit RewardPaid(_account, cdxLitBalance);
+            rewardToken.safeTransfer(_account, reward);
+            emit RewardPaid(_account, reward);
         }
 
         //also get rewards from linked rewards
@@ -235,8 +207,8 @@ contract CdxRewardPool {
         }
     }
 
-    function getReward(bool _stake) external {
-        getReward(msg.sender, true, _stake);
+    function getReward() external {
+        getReward(msg.sender, true);
     }
 
     function donate(uint256 _amount) external returns (bool) {

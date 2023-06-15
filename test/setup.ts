@@ -1,11 +1,16 @@
 import { ethers } from "hardhat";
-import { Booster, Booster__factory, BunniVoterProxy, BunniVoterProxy__factory, CdxLIT, CdxLIT__factory, CodexToken, CodexToken__factory, LITDepositor, LITDepositor__factory, PoolManagerProxy, PoolManagerProxy__factory, PoolManagerSecondaryProxy, PoolManagerSecondaryProxy__factory, PoolManagerV4, PoolManagerV4__factory, ProxyFactory, ProxyFactory__factory, RewardFactory__factory, StashFactoryV2__factory, TokenFactory__factory } from "../types";
+import { Booster, Booster__factory, BunniVoterProxy, BunniVoterProxy__factory, CdxLIT, CdxLIT__factory, CdxRewardPool, CdxRewardPool__factory, CodexToken, CodexToken__factory, ExtraRewardStashV3__factory, IERC20, IERC20__factory, LITDepositor, LITDepositor__factory, PoolManagerProxy, PoolManagerProxy__factory, PoolManagerSecondaryProxy, PoolManagerSecondaryProxy__factory, PoolManagerV4, PoolManagerV4__factory, ProxyFactory, ProxyFactory__factory, RewardFactory, RewardFactory__factory, StashFactoryV2, StashFactoryV2__factory, StashTokenWrapper__factory, TokenFactory, TokenFactory__factory } from "../types";
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
+
+const BALANCER_20WETH_80LIT = '0x9232a548DD9E81BaC65500b5e0d918F8Ba93675C';
+const OLIT = "0x627fee87d0D9D2c55098A06ac805Db8F98B158Aa";
 
 export type ContractsSetup = {
     deployer: SignerWithAddress;
     multisig: SignerWithAddress;
     voterProxy: BunniVoterProxy;
+    want: IERC20,
+    oLIT: IERC20,
     cdx: CodexToken;
     booster: Booster;
     cdxLIT: CdxLIT;
@@ -13,10 +18,18 @@ export type ContractsSetup = {
     poolManagerProxy: PoolManagerProxy;
     poolManagerSecondaryProxy: PoolManagerSecondaryProxy;
     poolManagerV4: PoolManagerV4;
+    tokenFactory: TokenFactory;
+    rewardFactory: RewardFactory;
+    proxyFactory: ProxyFactory;
+    stashFactory: StashFactoryV2;
+    cdxRewardPool: CdxRewardPool;
 }
 
 export const setupContracts = async (): Promise<ContractsSetup> => {
     const [deployer, multisig] = await ethers.getSigners();
+
+    const want = IERC20__factory.connect(BALANCER_20WETH_80LIT, deployer);
+    const oLIT = IERC20__factory.connect(OLIT, deployer);
 
     const voterProxy = await new BunniVoterProxy__factory(deployer).deploy();
     await voterProxy.deployed();
@@ -72,7 +85,23 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         proxyFactory.address
     );
     await stashFactory.deployed();
+    const stashTokenWrapper = await new StashTokenWrapper__factory(deployer).deploy(booster.address);
+    await stashTokenWrapper.deployed();
+    const stashV3Implementation = await new ExtraRewardStashV3__factory(deployer).deploy(
+        stashTokenWrapper.address,
+        proxyFactory.address,
+        cdx.address
+    );
+    await stashV3Implementation.deployed();
+    await (await stashFactory.setImplementation(ethers.constants.AddressZero, ethers.constants.AddressZero, stashV3Implementation.address)).wait();
     await (await booster.setFactories(rewardFactory.address, stashFactory.address, tokenFactory.address)).wait();
+
+    const cdxRewardPool = await new CdxRewardPool__factory(deployer).deploy(
+        cdx.address,
+        oLIT.address,
+        booster.address,
+        deployer.address
+    );
 
     // transfer ownership to multisig
     await (await booster.setFeeManager(multisig.address)).wait();
@@ -84,6 +113,8 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
     return {
         deployer,
         multisig,
+        want,
+        oLIT,
         voterProxy,
         cdx,
         booster,
@@ -91,6 +122,11 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         litDepositor,
         poolManagerProxy,
         poolManagerSecondaryProxy,
-        poolManagerV4
+        poolManagerV4,
+        tokenFactory,
+        rewardFactory,
+        proxyFactory,
+        stashFactory,
+        cdxRewardPool,
     };
 }
