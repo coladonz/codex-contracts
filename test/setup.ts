@@ -1,13 +1,14 @@
 import { ethers } from "hardhat";
-import { Booster, Booster__factory, BunniVoterProxy, BunniVoterProxy__factory, CdxLIT, CdxLIT__factory, CdxRewardPool, CdxRewardPool__factory, CodexToken, CodexToken__factory, ExtraRewardStashV3__factory, IERC20, IERC20__factory, LITDepositor, LITDepositor__factory, PoolManagerProxy, PoolManagerProxy__factory, PoolManagerSecondaryProxy, PoolManagerSecondaryProxy__factory, PoolManagerV4, PoolManagerV4__factory, ProxyFactory, ProxyFactory__factory, RewardFactory, RewardFactory__factory, StashFactoryV2, StashFactoryV2__factory, StashTokenWrapper__factory, TokenFactory, TokenFactory__factory } from "../types";
+import { BaseRewardPool, BaseRewardPool__factory, Booster, Booster__factory, BunniVoterProxy, BunniVoterProxy__factory, CdxLIT, CdxLIT__factory, CdxLockerV2, CdxLockerV2__factory, CdxRewardPool, CdxRewardPool__factory, CdxStakingProxyV2, CdxStakingProxyV2__factory, CodexToken, CodexToken__factory, ExtraRewardStashV3__factory, IERC20, IERC20__factory, LITDepositor, LITDepositor__factory, PoolManagerProxy, PoolManagerProxy__factory, PoolManagerSecondaryProxy, PoolManagerSecondaryProxy__factory, PoolManagerV4, PoolManagerV4__factory, ProxyFactory, ProxyFactory__factory, RewardFactory, RewardFactory__factory, StashFactoryV2, StashFactoryV2__factory, StashTokenWrapper__factory, TokenFactory, TokenFactory__factory } from "../types";
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
-
-const BALANCER_20WETH_80LIT = '0x9232a548DD9E81BaC65500b5e0d918F8Ba93675C';
-const OLIT = "0x627fee87d0D9D2c55098A06ac805Db8F98B158Aa";
+import { BALANCER_20WETH_80LIT, OLIT, gauges } from "./config";
 
 export type ContractsSetup = {
     deployer: SignerWithAddress;
     multisig: SignerWithAddress;
+    treasury: SignerWithAddress;
+    alice: SignerWithAddress;
+    bob: SignerWithAddress;
     voterProxy: BunniVoterProxy;
     want: IERC20,
     oLIT: IERC20,
@@ -23,10 +24,13 @@ export type ContractsSetup = {
     proxyFactory: ProxyFactory;
     stashFactory: StashFactoryV2;
     cdxRewardPool: CdxRewardPool;
+    cdxLITRewardPool: BaseRewardPool;
+    cdxLocker: CdxLockerV2;
+    cdxStakingProxy: CdxStakingProxyV2;
 }
 
 export const setupContracts = async (): Promise<ContractsSetup> => {
-    const [deployer, multisig] = await ethers.getSigners();
+    const [deployer, multisig, treasury, alice, bob] = await ethers.getSigners();
 
     const want = IERC20__factory.connect(BALANCER_20WETH_80LIT, deployer);
     const oLIT = IERC20__factory.connect(OLIT, deployer);
@@ -38,6 +42,9 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         voterProxy.address
     );
     await cdx.deployed();
+
+    // IMPORTANT: mint cdx for airdrop
+    await (await cdx.mint(deployer.address, ethers.utils.parseEther('1000000'))).wait();
 
     const booster = await new Booster__factory(deployer).deploy(
         voterProxy.address, cdx.address
@@ -96,12 +103,43 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
     await (await stashFactory.setImplementation(ethers.constants.AddressZero, ethers.constants.AddressZero, stashV3Implementation.address)).wait();
     await (await booster.setFactories(rewardFactory.address, stashFactory.address, tokenFactory.address)).wait();
 
+    const cdxLITRewardPool = await new BaseRewardPool__factory(deployer).deploy(
+        0,
+        cdxLIT.address,
+        oLIT.address,
+        booster.address,
+        rewardFactory.address,
+    );
+    await cdxLITRewardPool.deployed();
     const cdxRewardPool = await new CdxRewardPool__factory(deployer).deploy(
         cdx.address,
         oLIT.address,
         booster.address,
         deployer.address
     );
+    await cdxRewardPool.deployed();
+    await (await booster.setRewardContracts(cdxLITRewardPool.address, cdxRewardPool.address)).wait();
+    await (await booster.setTreasury(treasury.address)).wait();
+
+    const cdxLocker = await new CdxLockerV2__factory(deployer).deploy(
+        cdx.address,
+        cdxLIT.address,
+        treasury.address,
+        cdxLITRewardPool.address,
+    );
+    await cdxLocker.deployed();
+    const cdxStakingProxy = await new CdxStakingProxyV2__factory(deployer).deploy(
+        cdx.address,
+        cdxLIT.address,
+        cdxRewardPool.address,
+        cdxLITRewardPool.address,
+        litDepositor.address,
+        cdxLocker.address
+    );
+    await cdxStakingProxy.deployed();
+    await (await cdxStakingProxy.setCallIncentive(100)).wait();
+    await (await cdxStakingProxy.setApprovals()).wait();
+    await (await cdxLocker.setStakingContract(cdxStakingProxy.address)).wait();
 
     // transfer ownership to multisig
     await (await booster.setFeeManager(multisig.address)).wait();
@@ -113,6 +151,9 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
     return {
         deployer,
         multisig,
+        treasury,
+        alice,
+        bob,
         want,
         oLIT,
         voterProxy,
@@ -128,5 +169,16 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         proxyFactory,
         stashFactory,
         cdxRewardPool,
+        cdxLITRewardPool,
+        cdxLocker,
+        cdxStakingProxy,
     };
+}
+
+export const addGauges = async (setup: ContractsSetup): Promise<void> => {
+    for (let i = 0; i < gauges.length; i++) {
+        await (await setup.poolManagerV4.connect(setup.multisig)["addPool(address)"](
+            gauges[i].gauge
+        )).wait();
+    }
 }
