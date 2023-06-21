@@ -37,61 +37,81 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
 
     const voterProxy = await new BunniVoterProxy__factory(deployer).deploy();
     await voterProxy.deployed();
+    console.log("VoterProxy deployed at", voterProxy.address);
 
     const cdx = await new CodexToken__factory(deployer).deploy(
         voterProxy.address
     );
     await cdx.deployed();
+    console.log("CodexToken deployed at", cdx.address);
 
     // IMPORTANT: mint cdx for airdrop
     await (await cdx.mint(deployer.address, ethers.utils.parseEther('1000000'))).wait();
+    console.log("1M CodexToken minted");
 
     const booster = await new Booster__factory(deployer).deploy(
         voterProxy.address, cdx.address
     );
     await booster.deployed();
+    console.log("Booster deployed at", booster.address);
 
     await (await voterProxy.setOperator(booster.address)).wait();
+    console.log("voterProxy.setOperator");
     await (await cdx.updateOperator()).wait();
+    console.log("cdx.updateOperator");
 
     const cdxLIT = await new CdxLIT__factory(deployer).deploy();
     await cdxLIT.deployed();
+    console.log("cdxLIT deployed at", cdxLIT.address);
     const litDepositor = await new LITDepositor__factory(deployer).deploy(
         voterProxy.address, cdxLIT.address
     )
     await litDepositor.deployed();
+    console.log("LITDepositor deployed at", litDepositor.address);
     await (await cdxLIT.setOperator(litDepositor.address)).wait();
+    console.log("cdxLIT.setOperator");
     await (await voterProxy.setDepositor(litDepositor.address)).wait();
+    console.log("voterProxy.setDepositor");
 
     const poolManagerProxy = await new PoolManagerProxy__factory(deployer).deploy(
         booster.address
     )
     await poolManagerProxy.deployed();
+    console.log("PoolManagerProxy deployed at", poolManagerProxy.address);
     const poolManagerSecondaryProxy = await new PoolManagerSecondaryProxy__factory(deployer).deploy(
         booster.address,
         poolManagerProxy.address
     )
     await poolManagerSecondaryProxy.deployed();
+    console.log("PoolManagerSecondaryProxy deployed at", poolManagerSecondaryProxy.address);
     await (await poolManagerProxy.setOperator(poolManagerSecondaryProxy.address)).wait();
+    console.log("poolManagerProxy.setOperator");
     const poolManagerV4 = await new PoolManagerV4__factory(deployer).deploy(
         poolManagerSecondaryProxy.address
     )
     await poolManagerV4.deployed();
+    console.log("PoolManagerV4 deployed at", poolManagerV4.address);
     await (await poolManagerSecondaryProxy.setOperator(poolManagerV4.address)).wait();
+    console.log("poolManagerSecondaryProxy.setOperator");
     await (await booster.setPoolManager(poolManagerProxy.address)).wait();
+    console.log("booster.setPoolManager");
 
     const tokenFactory = await new TokenFactory__factory(deployer).deploy(booster.address);
     await tokenFactory.deployed();
+    console.log("TokenFactory deployed at", tokenFactory.address);
     const rewardFactory = await new RewardFactory__factory(deployer).deploy(booster.address);
     await rewardFactory.deployed();
+    console.log("RewardFactory deployed at", rewardFactory.address);
     const proxyFactory = await new ProxyFactory__factory(deployer).deploy();
     await proxyFactory.deployed();
+    console.log("ProxyFactory deployed at", proxyFactory.address);
     const stashFactory = await new StashFactoryV2__factory(deployer).deploy(
         booster.address,
         rewardFactory.address,
         proxyFactory.address
     );
     await stashFactory.deployed();
+    console.log("StashFactory deployed at", stashFactory.address);
     const stashTokenWrapper = await new StashTokenWrapper__factory(deployer).deploy(booster.address);
     await stashTokenWrapper.deployed();
     const stashV3Implementation = await new ExtraRewardStashV3__factory(deployer).deploy(
@@ -175,10 +195,17 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
     };
 }
 
-export const addGauges = async (setup: ContractsSetup): Promise<void> => {
+export const addGauges = async (setup: ContractsSetup): Promise<BaseRewardPool[]> => {
+    const result = []
     for (let i = 0; i < gauges.length; i++) {
         await (await setup.poolManagerV4.connect(setup.multisig)["addPool(address)"](
             gauges[i].gauge
         )).wait();
+        result.push(
+            BaseRewardPool__factory.connect(
+                (await setup.booster.poolInfo(i)).oLITRewards, setup.deployer
+            )
+        )
     }
+    return result;
 }

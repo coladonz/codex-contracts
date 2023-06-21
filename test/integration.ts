@@ -1,7 +1,7 @@
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 import { ContractsSetup, addGauges, setupContracts } from "./setup"
-import { IERC20, ISmartWalletChecker__factory } from "../types";
-import { BUNNI_SMART_WALLET_CHECKER, whales } from "./config";
+import { BaseRewardPool, IERC20, IERC20__factory, ISmartWalletChecker__factory } from "../types";
+import { BUNNI_SMART_WALLET_CHECKER, gauges, whales } from "./config";
 import { ethers, network } from "hardhat";
 import { BigNumber } from "ethers";
 import { expect } from "chai";
@@ -27,11 +27,12 @@ export const prepareAssetsFromWhale = async (signer: SignerWithAddress, asset: I
 
 describe("Integration", () => {
     let setup: ContractsSetup
+    let gaugeRewards: BaseRewardPool[];
 
     beforeEach(async () => {
         setup = await setupContracts();
 
-        await addGauges(setup);
+        gaugeRewards = await addGauges(setup);
 
         // (IMPORTANT) Ask Bunni to whitelist voter proxy address
         const smartWalletChecker = ISmartWalletChecker__factory.connect(BUNNI_SMART_WALLET_CHECKER, setup.deployer);
@@ -101,5 +102,38 @@ describe("Integration", () => {
         await setup.cdxLocker.connect(setup.alice).lock(setup.alice.address, amount, 0);
 
         expect(await setup.cdxLocker.lockedBalanceOf(setup.alice.address)).to.equal(amount);
+    })
+
+    it("deposit/withdraw bunni lp", async () => {
+        const bunniLP = IERC20__factory.connect(gauges[0].bunniLp, setup.deployer);
+
+        const amount = ethers.utils.parseEther("1");
+        await prepareAssetsFromWhale(
+            setup.alice,
+            bunniLP,
+            amount
+        );
+
+        await bunniLP.connect(setup.alice).approve(setup.booster.address, amount);
+        await setup.booster.connect(setup.alice).deposit(
+            0,
+            amount,
+            true
+        );
+
+        expect(await bunniLP.balanceOf(setup.alice.address)).to.equal(0);
+
+        // increase 1 month
+        await ethers.provider.send("evm_increaseTime", [60 * 60 * 24 * 30]);
+        await ethers.provider.send("evm_mine", []);
+
+        await gaugeRewards[0].connect(setup.alice).withdrawAndUnwrap(
+            amount,
+            true
+        );
+        expect(await bunniLP.balanceOf(setup.alice.address)).to.equal(amount);
+
+        expect(await setup.oLIT.balanceOf(setup.alice.address)).to.equal(0);
+        expect(await setup.cdx.balanceOf(setup.alice.address)).to.equal(0);
     })
 });

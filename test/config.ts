@@ -13,5 +13,9 @@ export const whales = [
     {
         asset: BALANCER_20WETH_80LIT,
         whale: '0xb84dfdD51d18B1613432bfaE91dfcC48899D4151',
+    },
+    {
+        asset: gauges[0].bunniLp,
+        whale: '0xfb17199BB361dAED5B8dF4E0d263f2f6CB990C50',
     }
 ]
