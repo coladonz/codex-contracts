@@ -114,14 +114,18 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
     console.log("StashFactory deployed at", stashFactory.address);
     const stashTokenWrapper = await new StashTokenWrapper__factory(deployer).deploy(booster.address);
     await stashTokenWrapper.deployed();
+    console.log("StashTokenWrapper deployed at", stashTokenWrapper.address);
     const stashV3Implementation = await new ExtraRewardStashV3__factory(deployer).deploy(
         stashTokenWrapper.address,
         proxyFactory.address,
         cdx.address
     );
     await stashV3Implementation.deployed();
+    console.log("StashV3Implementation deployed at", stashV3Implementation.address);
     await (await stashFactory.setImplementation(ethers.constants.AddressZero, ethers.constants.AddressZero, stashV3Implementation.address)).wait();
+    console.log("stashFactory.setImplementation");
     await (await booster.setFactories(rewardFactory.address, stashFactory.address, tokenFactory.address)).wait();
+    console.log("booster.setFactories");
 
     const cdxLITRewardPool = await new BaseRewardPool__factory(deployer).deploy(
         0,
@@ -131,6 +135,7 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         rewardFactory.address,
     );
     await cdxLITRewardPool.deployed();
+    console.log("cdxLITRewardPool deployed at", cdxLITRewardPool.address);
     const cdxRewardPool = await new CdxRewardPool__factory(deployer).deploy(
         cdx.address,
         oLIT.address,
@@ -138,8 +143,11 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         deployer.address
     );
     await cdxRewardPool.deployed();
+    console.log("cdxRewardPool deployed at", cdxRewardPool.address);
     await (await booster.setRewardContracts(cdxLITRewardPool.address, cdxRewardPool.address)).wait();
+    console.log("booster.setRewardContracts");
     await (await booster.setTreasury(treasury.address)).wait();
+    console.log("booster.setTreasury");
 
     const cdxLocker = await new CdxLockerV2__factory(deployer).deploy(
         cdx.address,
@@ -148,6 +156,7 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         cdxLITRewardPool.address,
     );
     await cdxLocker.deployed();
+    console.log("cdxLocker deployed at", cdxLocker.address);
     const cdxStakingProxy = await new CdxStakingProxyV2__factory(deployer).deploy(
         cdx.address,
         cdxLIT.address,
@@ -157,16 +166,27 @@ export const setupContracts = async (): Promise<ContractsSetup> => {
         cdxLocker.address
     );
     await cdxStakingProxy.deployed();
+    console.log("cdxStakingProxy deployed at", cdxStakingProxy.address);
     await (await cdxStakingProxy.setCallIncentive(100)).wait();
+    console.log("cdxStakingProxy.setCallIncentive");
     await (await cdxStakingProxy.setApprovals()).wait();
+    console.log("cdxStakingProxy.setApprovals");
     await (await cdxLocker.setStakingContract(cdxStakingProxy.address)).wait();
+    console.log("cdxLocker.setStakingContract");
+    await (await cdxLocker.setApprovals()).wait();
+    console.log("cdxLocker.setApprovals");
 
     // transfer ownership to multisig
     await (await booster.setFeeManager(multisig.address)).wait();
+    console.log("booster.setFeeManager");
     await (await voterProxy.setOwner(multisig.address)).wait();
+    console.log("voterProxy.setOwner");
     await (await poolManagerProxy.setOwner(multisig.address)).wait();
+    console.log("poolManagerProxy.setOwner");
     await (await poolManagerSecondaryProxy.setOwner(multisig.address)).wait();
+    console.log("poolManagerSecondaryProxy.setOwner");
     await (await poolManagerV4.setOperator(multisig.address)).wait();
+    console.log("poolManagerV4.setOperator");
 
     return {
         deployer,
@@ -206,6 +226,7 @@ export const addGauges = async (setup: ContractsSetup): Promise<BaseRewardPool[]
                 (await setup.booster.poolInfo(i)).oLITRewards, setup.deployer
             )
         )
+        console.log("New pool added for Bunni LP -", gauges[i].bunniLp);
     }
     return result;
 }
