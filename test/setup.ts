@@ -227,6 +227,11 @@ export const addGauges = async (setup: ContractsSetup): Promise<BaseRewardPool[]
             )
         )
         console.log("New pool added for Bunni LP -", gauges[i].bunniLp);
+        console.log("PID =", i);
+        console.log("token =", (await setup.booster.poolInfo(i)).token);
+        console.log("gauge =", (await setup.booster.poolInfo(i)).gauge);
+        console.log("oLITRewards =", (await setup.booster.poolInfo(i)).oLITRewards);
+        console.log("stash =", (await setup.booster.poolInfo(i)).stash);
     }
     return result;
 }
